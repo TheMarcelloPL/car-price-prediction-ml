@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import joblib
 import matplotlib.pyplot as plt
@@ -21,88 +20,55 @@ from sklearn.tree import DecisionTreeRegressor
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data" / "raw"
+DATA_PATH = PROJECT_ROOT / "data" / "raw" / "cardekho.csv"
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 FIGURES_DIR = OUTPUT_DIR / "figures"
 MODELS_DIR = PROJECT_ROOT / "models"
 
-DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/autos/imports-85.data"
-RAW_DATA_PATH = DATA_DIR / "imports-85.data"
-TARGET_COLUMN = "price"
+TARGET_COLUMN = "selling_price"
 RANDOM_STATE = 42
-
-COLUMNS = [
-    "symboling",
-    "normalized-losses",
-    "make",
-    "fuel-type",
-    "aspiration",
-    "num-of-doors",
-    "body-style",
-    "drive-wheels",
-    "engine-location",
-    "wheel-base",
-    "length",
-    "width",
-    "height",
-    "curb-weight",
-    "engine-type",
-    "num-of-cylinders",
-    "engine-size",
-    "fuel-system",
-    "bore",
-    "stroke",
-    "compression-ratio",
-    "horsepower",
-    "peak-rpm",
-    "city-mpg",
-    "highway-mpg",
-    "price",
-]
+REFERENCE_YEAR = 2020
+INR_TO_PLN = 0.04
 
 NUMERIC_COLUMNS = [
-    "symboling",
-    "normalized-losses",
-    "wheel-base",
-    "length",
-    "width",
-    "height",
-    "curb-weight",
-    "engine-size",
-    "bore",
-    "stroke",
-    "compression-ratio",
-    "horsepower",
-    "peak-rpm",
-    "city-mpg",
-    "highway-mpg",
-    "price",
+    "year",
+    "selling_price",
+    "km_driven",
+    "mileage(km/ltr/kg)",
+    "engine",
+    "max_power",
+    "seats",
 ]
+
+FEATURE_LABELS = {
+    "car_age": "wiek samochodu",
+    "km_driven": "przebieg",
+    "mileage(km/ltr/kg)": "wydajnosc paliwowa",
+    "engine": "pojemnosc silnika",
+    "max_power": "moc maksymalna",
+    "seats": "liczba miejsc",
+    "brand": "marka",
+    "fuel": "rodzaj paliwa",
+    "seller_type": "typ sprzedawcy",
+    "transmission": "skrzynia biegow",
+    "owner": "liczba wlascicieli",
+}
 
 
 def ensure_directories_exist() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def download_dataset() -> Path:
-    """Download the dataset only when it is not already saved locally."""
-    ensure_directories_exist()
+def load_dataset() -> pd.DataFrame:
+    if not DATA_PATH.exists():
+        raise FileNotFoundError(
+            "Nie znaleziono data/raw/cardekho.csv. "
+            "Najpierw uruchom: python src/download_data.py"
+        )
 
-    if RAW_DATA_PATH.exists():
-        print(f"Dane juz istnieja: {RAW_DATA_PATH}")
-        return RAW_DATA_PATH
-
-    print("Pobieram dane z UCI Machine Learning Repository...")
-    urlretrieve(DATA_URL, RAW_DATA_PATH)
-    print(f"Zapisano dane w: {RAW_DATA_PATH}")
-    return RAW_DATA_PATH
-
-
-def load_dataset(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, names=COLUMNS, na_values="?")
+    df = pd.read_csv(DATA_PATH)
     print(f"Wczytano dane. Liczba wierszy: {df.shape[0]}, liczba kolumn: {df.shape[1]}")
     return df
 
@@ -113,14 +79,30 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     for column in NUMERIC_COLUMNS:
         cleaned[column] = pd.to_numeric(cleaned[column], errors="coerce")
 
-    before_drop = len(cleaned)
-    cleaned = cleaned.dropna(subset=[TARGET_COLUMN])
-    removed_rows = before_drop - len(cleaned)
-    print(f"Usunieto wiersze bez ceny: {removed_rows}")
+    before_duplicates = len(cleaned)
+    cleaned = cleaned.drop_duplicates()
+    print(f"Usunieto duplikaty: {before_duplicates - len(cleaned)}")
 
-    cleaned["car-volume"] = cleaned["length"] * cleaned["width"] * cleaned["height"]
-    cleaned["horsepower-per-weight"] = cleaned["horsepower"] / cleaned["curb-weight"]
-    cleaned["average-mpg"] = (cleaned["city-mpg"] + cleaned["highway-mpg"]) / 2
+    cleaned["brand"] = cleaned["name"].str.split().str[0].str.title()
+    cleaned["car_age"] = REFERENCE_YEAR - cleaned["year"]
+    cleaned = cleaned.drop(columns=["name", "year"])
+
+    cleaned.loc[cleaned["mileage(km/ltr/kg)"] <= 0, "mileage(km/ltr/kg)"] = np.nan
+    cleaned.loc[cleaned["max_power"] <= 0, "max_power"] = np.nan
+    cleaned = cleaned.dropna(subset=[TARGET_COLUMN])
+
+    lower_price = cleaned[TARGET_COLUMN].quantile(0.01)
+    upper_price = cleaned[TARGET_COLUMN].quantile(0.99)
+    before_outliers = len(cleaned)
+    cleaned = cleaned[
+        cleaned[TARGET_COLUMN].between(lower_price, upper_price)
+        & (cleaned["km_driven"] <= 1_000_000)
+        & (cleaned["car_age"] >= 0)
+    ]
+    print(f"Usunieto skrajne lub bledne rekordy: {before_outliers - len(cleaned)}")
+
+    cleaned[TARGET_COLUMN] = cleaned[TARGET_COLUMN] * INR_TO_PLN
+    print(f"Przeliczono ceny wedlug stalego kursu: 1 INR = {INR_TO_PLN:.2f} PLN")
 
     return cleaned
 
@@ -145,7 +127,7 @@ def build_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     categorical_transformer = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("encoder", OneHotEncoder(handle_unknown="ignore")),
+            ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
         ]
     )
 
@@ -161,10 +143,11 @@ def get_models() -> dict[str, object]:
     return {
         "Linear Regression": LinearRegression(),
         "Ridge Regression": Ridge(alpha=10.0),
-        "Decision Tree": DecisionTreeRegressor(max_depth=5, random_state=RANDOM_STATE),
+        "Decision Tree": DecisionTreeRegressor(max_depth=8, random_state=RANDOM_STATE),
         "Random Forest": RandomForestRegressor(
-            n_estimators=300,
+            n_estimators=200,
             random_state=RANDOM_STATE,
+            n_jobs=-1,
         ),
         "Gradient Boosting": GradientBoostingRegressor(random_state=RANDOM_STATE),
         "KNN Regression": KNeighborsRegressor(n_neighbors=5),
@@ -182,6 +165,7 @@ def evaluate_models(
     predictions_by_model: dict[str, np.ndarray] = {}
 
     for model_name, model in get_models().items():
+        print(f"Trenuje model: {model_name}")
         pipeline = Pipeline(
             steps=[
                 ("preprocess", build_preprocessor(X_train)),
@@ -192,16 +176,12 @@ def evaluate_models(
         pipeline.fit(X_train, y_train)
         predictions = pipeline.predict(X_test)
 
-        mae = mean_absolute_error(y_test, predictions)
-        rmse = np.sqrt(mean_squared_error(y_test, predictions))
-        r2 = r2_score(y_test, predictions)
-
         results.append(
             {
                 "model": model_name,
-                "MAE": mae,
-                "RMSE": rmse,
-                "R2": r2,
+                "MAE": mean_absolute_error(y_test, predictions),
+                "RMSE": np.sqrt(mean_squared_error(y_test, predictions)),
+                "R2": r2_score(y_test, predictions),
             }
         )
         trained_models[model_name] = pipeline
@@ -216,9 +196,9 @@ def evaluate_models(
 
 def save_price_distribution(df: pd.DataFrame) -> None:
     plt.figure(figsize=(10, 6))
-    sns.histplot(df[TARGET_COLUMN], kde=True, bins=25)
+    sns.histplot(df[TARGET_COLUMN], kde=True, bins=30)
     plt.title("Rozklad cen samochodow")
-    plt.xlabel("Cena")
+    plt.xlabel("Cena sprzedazy (PLN)")
     plt.ylabel("Liczba samochodow")
     plt.tight_layout()
     plt.savefig(FIGURES_DIR / "price_distribution.png", dpi=150)
@@ -226,11 +206,10 @@ def save_price_distribution(df: pd.DataFrame) -> None:
 
 
 def save_correlation_heatmap(df: pd.DataFrame) -> None:
-    numeric_df = df.select_dtypes(include=["number"])
-    correlation = numeric_df.corr()
+    correlation = df.select_dtypes(include=["number"]).corr()
 
-    plt.figure(figsize=(14, 10))
-    sns.heatmap(correlation, cmap="coolwarm", center=0, linewidths=0.5)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(correlation, cmap="coolwarm", center=0, annot=True, fmt=".2f")
     plt.title("Korelacje miedzy cechami liczbowymi")
     plt.tight_layout()
     plt.savefig(FIGURES_DIR / "correlation_heatmap.png", dpi=150)
@@ -241,45 +220,50 @@ def save_model_comparison(results_df: pd.DataFrame) -> None:
     plt.figure(figsize=(10, 6))
     sns.barplot(data=results_df, x="MAE", y="model")
     plt.title("Porownanie modeli wedlug MAE")
-    plt.xlabel("MAE - sredni blad predykcji")
+    plt.xlabel("MAE - sredni blad predykcji (PLN)")
     plt.ylabel("Model")
     plt.tight_layout()
     plt.savefig(FIGURES_DIR / "model_comparison_mae.png", dpi=150)
     plt.close()
 
 
-def save_actual_vs_predicted(y_test: pd.Series, predictions: np.ndarray, best_model_name: str) -> None:
+def save_actual_vs_predicted(
+    y_test: pd.Series,
+    predictions: np.ndarray,
+    best_model_name: str,
+) -> None:
     min_value = min(y_test.min(), predictions.min())
     max_value = max(y_test.max(), predictions.max())
 
     plt.figure(figsize=(8, 8))
-    plt.scatter(y_test, predictions, alpha=0.75)
+    plt.scatter(y_test, predictions, alpha=0.6)
     plt.plot([min_value, max_value], [min_value, max_value], color="red", linestyle="--")
     plt.title(f"Ceny prawdziwe vs przewidziane - {best_model_name}")
-    plt.xlabel("Prawdziwa cena")
-    plt.ylabel("Przewidziana cena")
+    plt.xlabel("Prawdziwa cena (PLN)")
+    plt.ylabel("Przewidziana cena (PLN)")
     plt.tight_layout()
     plt.savefig(FIGURES_DIR / "actual_vs_predicted.png", dpi=150)
     plt.close()
 
 
 def clean_feature_name(name: str) -> str:
-    return (
-        name.replace("numeric__", "")
-        .replace("categorical__", "")
-        .replace("_", " ")
-        .replace("-", " ")
-    )
+    cleaned_name = name.replace("numeric__", "").replace("categorical__", "")
+
+    for original, polish in FEATURE_LABELS.items():
+        if cleaned_name == original:
+            return polish
+        if cleaned_name.startswith(f"{original}_"):
+            value = cleaned_name.removeprefix(f"{original}_")
+            return f"{polish}: {value}"
+
+    return cleaned_name.replace("_", " ")
 
 
 def save_feature_importance(random_forest_pipeline: Pipeline) -> None:
     model = random_forest_pipeline.named_steps["model"]
     preprocessor = random_forest_pipeline.named_steps["preprocess"]
-
-    if not hasattr(model, "feature_importances_"):
-        return
-
     feature_names = preprocessor.get_feature_names_out()
+
     importance_df = pd.DataFrame(
         {
             "feature": [clean_feature_name(name) for name in feature_names],
@@ -289,9 +273,8 @@ def save_feature_importance(random_forest_pipeline: Pipeline) -> None:
 
     importance_df.to_csv(OUTPUT_DIR / "feature_importance.csv", index=False)
 
-    top_features = importance_df.head(15)
     plt.figure(figsize=(10, 7))
-    sns.barplot(data=top_features, x="importance", y="feature")
+    sns.barplot(data=importance_df.head(15), x="importance", y="feature")
     plt.title("Najwazniejsze cechy wedlug modelu Random Forest")
     plt.xlabel("Waznosc cechy")
     plt.ylabel("Cecha")
@@ -310,9 +293,7 @@ def save_results(
 
     results_df.to_csv(results_path, index=False)
     joblib.dump(trained_models[best_model_name], model_path)
-
-    if "Random Forest" in trained_models:
-        save_feature_importance(trained_models["Random Forest"])
+    save_feature_importance(trained_models["Random Forest"])
 
     print("\nWyniki modeli:")
     print(results_df.to_string(index=False))
@@ -322,15 +303,14 @@ def save_results(
 
 
 def main() -> None:
-    raw_data_path = download_dataset()
-    raw_df = load_dataset(raw_data_path)
+    ensure_directories_exist()
+    raw_df = load_dataset()
     cleaned_df = clean_dataset(raw_df)
 
     save_price_distribution(cleaned_df)
     save_correlation_heatmap(cleaned_df)
 
     X, y = split_features_and_target(cleaned_df)
-
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
