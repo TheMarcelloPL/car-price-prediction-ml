@@ -49,16 +49,14 @@ Program:
 - tworzy cechę wieku samochodu,
 - usuwa skrajne lub błędne rekordy,
 - przelicza ceny na złotówki,
-- zamienia teksty na liczby za pomocą One-Hot Encoding.
+- zamienia teksty na liczby za pomocą `LabelEncoder`.
 
 ## Porównywane modele
 
 - Linear Regression,
-- Ridge Regression,
-- Decision Tree,
-- Random Forest,
-- Gradient Boosting,
-- KNN Regression.
+- KNN Regression,
+- Decision Tree Regression,
+- Random Forest Regression.
 
 Modele są porównywane za pomocą MAE, RMSE oraz R². Najlepszy model jest wybierany według najniższego MAE.
 
@@ -66,11 +64,28 @@ Modele są porównywane za pomocą MAE, RMSE oraz R². Najlepszy model jest wybi
 
 Najlepszym modelem okazał się **Random Forest**:
 
-- MAE: około 2 812 PLN,
-- RMSE: około 4 178 PLN,
+- MAE: około 2 814 PLN,
+- RMSE: około 4 172 PLN,
 - R²: około 0,897.
 
-Oznacza to, że model myli się średnio o około 2 812 zł. Najważniejszymi cechami według modelu Random Forest były moc maksymalna, wiek samochodu, pojemność silnika i przebieg.
+Oznacza to, że model myli się średnio o około 2 814 zł. Najważniejszymi cechami według modelu Random Forest były moc maksymalna, wiek samochodu, pojemność silnika i przebieg.
+
+## Wnioski
+
+Random Forest osiągnął najlepszy wynik spośród porównywanych modeli. Regresja liniowa uzyskała najsłabszy wynik, ponieważ zależności między cechami samochodu i jego ceną nie są wyłącznie liniowe.
+
+Rocznik, przedstawiony jako wiek samochodu, okazał się jedną z najważniejszych cech. Potwierdza to, że cena używanego samochodu mocno zależy od jego wieku. Model może służyć do orientacyjnego szacowania ceny, ale nie zastępuje profesjonalnej wyceny.
+
+## Wizualizacje
+
+Folder `outputs/figures` zawiera wykresy przedstawiające:
+
+- rozkład cen samochodów,
+- średnią cenę według rodzaju paliwa,
+- korelacje między danymi liczbowymi,
+- porównanie błędów modeli,
+- najważniejsze cechy,
+- porównanie cen prawdziwych i przewidzianych.
 
 ## Uruchomienie
 
@@ -92,4 +107,4 @@ Trenowanie i porównanie modeli:
 python src/train_car_price_model.py
 ```
 
-Wyniki i wykresy zostaną zapisane w folderze `outputs`, a najlepszy model w folderze `models`.
+Wyniki i wykresy zostaną zapisane w folderze `outputs`.

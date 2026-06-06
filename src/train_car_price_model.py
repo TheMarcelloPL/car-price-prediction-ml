@@ -1,36 +1,53 @@
-from __future__ import annotations
+import os
 
-from pathlib import Path
-
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_PATH = PROJECT_ROOT / "data" / "raw" / "cardekho.csv"
-OUTPUT_DIR = PROJECT_ROOT / "outputs"
-FIGURES_DIR = OUTPUT_DIR / "figures"
-MODELS_DIR = PROJECT_ROOT / "models"
-
-TARGET_COLUMN = "selling_price"
-RANDOM_STATE = 42
-REFERENCE_YEAR = 2020
+# Ustawienia projektu
 INR_TO_PLN = 0.04
+REFERENCE_YEAR = 2020
 
-NUMERIC_COLUMNS = [
+project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+file_path = os.path.join(project_folder, "data", "raw", "cardekho.csv")
+outputs_folder = os.path.join(project_folder, "outputs")
+figures_folder = os.path.join(outputs_folder, "figures")
+
+os.makedirs(outputs_folder, exist_ok=True)
+os.makedirs(figures_folder, exist_ok=True)
+
+
+# Wczytanie danych
+if not os.path.exists(file_path):
+    raise FileNotFoundError(
+        "Nie znaleziono data/raw/cardekho.csv. "
+        "Najpierw uruchom: python src/download_data.py"
+    )
+
+df = pd.read_csv(file_path)
+
+print("Pierwsze wiersze danych:")
+print(df.head())
+print("\nLiczba wierszy i kolumn:", df.shape)
+print("\nBrakujace wartosci:")
+print(df.isnull().sum())
+
+
+# Czyszczenie danych
+rows_before_cleaning = len(df)
+
+df = df.drop_duplicates()
+
+numeric_columns = [
     "year",
     "selling_price",
     "km_driven",
@@ -40,297 +57,192 @@ NUMERIC_COLUMNS = [
     "seats",
 ]
 
-FEATURE_LABELS = {
-    "car_age": "wiek samochodu",
-    "km_driven": "przebieg",
-    "mileage(km/ltr/kg)": "wydajnosc paliwowa",
-    "engine": "pojemnosc silnika",
-    "max_power": "moc maksymalna",
-    "seats": "liczba miejsc",
-    "brand": "marka",
-    "fuel": "rodzaj paliwa",
-    "seller_type": "typ sprzedawcy",
-    "transmission": "skrzynia biegow",
-    "owner": "liczba wlascicieli",
-}
+for column in numeric_columns:
+    df[column] = pd.to_numeric(df[column], errors="coerce")
+
+# Z nazwy samochodu pobieramy pierwszy wyraz, czyli marke.
+df["brand"] = df["name"].str.split().str[0]
+
+# Zamiast rocznika tworzymy wiek samochodu.
+df["car_age"] = REFERENCE_YEAR - df["year"]
+df = df.drop(["name", "year"], axis=1)
+
+# Wartosc 0 dla spalania lub mocy oznacza blad danych.
+df.loc[df["mileage(km/ltr/kg)"] <= 0, "mileage(km/ltr/kg)"] = np.nan
+df.loc[df["max_power"] <= 0, "max_power"] = np.nan
+
+# Brakujace liczby uzupelniamy mediana.
+numeric_columns = df.select_dtypes(include="number").columns
+for column in numeric_columns:
+    df[column] = df[column].fillna(df[column].median())
+
+# Brakujace teksty uzupelniamy najczestsza wartoscia.
+text_columns = df.select_dtypes(exclude="number").columns
+for column in text_columns:
+    df[column] = df[column].fillna(df[column].mode()[0])
+
+# Usuwamy skrajne ceny i bledne rekordy.
+lower_price = df["selling_price"].quantile(0.01)
+upper_price = df["selling_price"].quantile(0.99)
+
+df = df[
+    (df["selling_price"] >= lower_price)
+    & (df["selling_price"] <= upper_price)
+    & (df["km_driven"] <= 1_000_000)
+    & (df["car_age"] >= 0)
+]
+
+# Oryginalna cena jest w rupiach indyjskich. Przeliczamy ja na PLN.
+df["selling_price"] = df["selling_price"] * INR_TO_PLN
+
+print("\nUsuniete rekordy:", rows_before_cleaning - len(df))
+print("Liczba rekordow po czyszczeniu:", len(df))
+print("Kurs waluty: 1 INR =", INR_TO_PLN, "PLN")
 
 
-def ensure_directories_exist() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+# Podstawowa analiza i wykresy
+print("\nPodstawowe statystyki:")
+print(df.describe())
+
+sns.histplot(data=df, x="selling_price", bins=30, kde=True)
+plt.title("Rozklad cen samochodow")
+plt.xlabel("Cena sprzedazy (PLN)")
+plt.ylabel("Liczba samochodow")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "price_distribution.png"))
+plt.close()
+
+average_price_by_fuel = df.groupby("fuel")["selling_price"].mean().reset_index()
+sns.barplot(data=average_price_by_fuel, x="fuel", y="selling_price")
+plt.title("Srednia cena wedlug rodzaju paliwa")
+plt.xlabel("Rodzaj paliwa")
+plt.ylabel("Srednia cena (PLN)")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "average_price_by_fuel.png"))
+plt.close()
+
+correlation = df.select_dtypes(include="number").corr()
+sns.heatmap(correlation, cmap="coolwarm", center=0, annot=True, fmt=".2f")
+plt.title("Korelacje miedzy danymi liczbowymi")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "correlation_heatmap.png"))
+plt.close()
 
 
-def load_dataset() -> pd.DataFrame:
-    if not DATA_PATH.exists():
-        raise FileNotFoundError(
-            "Nie znaleziono data/raw/cardekho.csv. "
-            "Najpierw uruchom: python src/download_data.py"
-        )
-
-    df = pd.read_csv(DATA_PATH)
-    print(f"Wczytano dane. Liczba wierszy: {df.shape[0]}, liczba kolumn: {df.shape[1]}")
-    return df
+# Zamieniamy teksty na liczby, tak jak na zajeciach.
+label_encoder = LabelEncoder()
+for column in text_columns:
+    df[column] = label_encoder.fit_transform(df[column])
 
 
-def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    cleaned = df.copy()
+# Podzial na cechy i wynik
+x = df.drop("selling_price", axis=1)
+y = df["selling_price"]
 
-    for column in NUMERIC_COLUMNS:
-        cleaned[column] = pd.to_numeric(cleaned[column], errors="coerce")
-
-    before_duplicates = len(cleaned)
-    cleaned = cleaned.drop_duplicates()
-    print(f"Usunieto duplikaty: {before_duplicates - len(cleaned)}")
-
-    cleaned["brand"] = cleaned["name"].str.split().str[0].str.title()
-    cleaned["car_age"] = REFERENCE_YEAR - cleaned["year"]
-    cleaned = cleaned.drop(columns=["name", "year"])
-
-    cleaned.loc[cleaned["mileage(km/ltr/kg)"] <= 0, "mileage(km/ltr/kg)"] = np.nan
-    cleaned.loc[cleaned["max_power"] <= 0, "max_power"] = np.nan
-    cleaned = cleaned.dropna(subset=[TARGET_COLUMN])
-
-    lower_price = cleaned[TARGET_COLUMN].quantile(0.01)
-    upper_price = cleaned[TARGET_COLUMN].quantile(0.99)
-    before_outliers = len(cleaned)
-    cleaned = cleaned[
-        cleaned[TARGET_COLUMN].between(lower_price, upper_price)
-        & (cleaned["km_driven"] <= 1_000_000)
-        & (cleaned["car_age"] >= 0)
-    ]
-    print(f"Usunieto skrajne lub bledne rekordy: {before_outliers - len(cleaned)}")
-
-    cleaned[TARGET_COLUMN] = cleaned[TARGET_COLUMN] * INR_TO_PLN
-    print(f"Przeliczono ceny wedlug stalego kursu: 1 INR = {INR_TO_PLN:.2f} PLN")
-
-    return cleaned
+# Podzial na 80% danych treningowych i 20% danych testowych.
+x_train, x_test, y_train, y_test = train_test_split(
+    x,
+    y,
+    test_size=0.2,
+    random_state=42,
+)
 
 
-def split_features_and_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    X = df.drop(columns=[TARGET_COLUMN])
-    y = df[TARGET_COLUMN]
-    return X, y
+# Model 1: regresja liniowa
+model_lr = LinearRegression()
+model_lr.fit(x_train, y_train)
+lr_prediction = model_lr.predict(x_test)
 
 
-def build_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
-    numeric_features = X.select_dtypes(include=["number"]).columns.tolist()
-    categorical_features = X.select_dtypes(exclude=["number"]).columns.tolist()
+# Model 2: KNN
+# KNN wymaga skalowania, aby duze liczby nie byly automatycznie wazniejsze.
+scaler = StandardScaler()
+x_train_scaled = scaler.fit_transform(x_train)
+x_test_scaled = scaler.transform(x_test)
 
-    numeric_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
-
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
-
-    return ColumnTransformer(
-        transformers=[
-            ("numeric", numeric_transformer, numeric_features),
-            ("categorical", categorical_transformer, categorical_features),
-        ]
-    )
+model_knn = KNeighborsRegressor(n_neighbors=5)
+model_knn.fit(x_train_scaled, y_train)
+knn_prediction = model_knn.predict(x_test_scaled)
 
 
-def get_models() -> dict[str, object]:
-    return {
-        "Linear Regression": LinearRegression(),
-        "Ridge Regression": Ridge(alpha=10.0),
-        "Decision Tree": DecisionTreeRegressor(max_depth=8, random_state=RANDOM_STATE),
-        "Random Forest": RandomForestRegressor(
-            n_estimators=200,
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
-        ),
-        "Gradient Boosting": GradientBoostingRegressor(random_state=RANDOM_STATE),
-        "KNN Regression": KNeighborsRegressor(n_neighbors=5),
-    }
+# Model 3: drzewo decyzyjne
+model_dt = DecisionTreeRegressor(max_depth=10, random_state=42)
+model_dt.fit(x_train, y_train)
+dt_prediction = model_dt.predict(x_test)
 
 
-def evaluate_models(
-    X_train: pd.DataFrame,
-    X_test: pd.DataFrame,
-    y_train: pd.Series,
-    y_test: pd.Series,
-) -> tuple[pd.DataFrame, dict[str, Pipeline], str, np.ndarray]:
-    results = []
-    trained_models: dict[str, Pipeline] = {}
-    predictions_by_model: dict[str, np.ndarray] = {}
-
-    for model_name, model in get_models().items():
-        print(f"Trenuje model: {model_name}")
-        pipeline = Pipeline(
-            steps=[
-                ("preprocess", build_preprocessor(X_train)),
-                ("model", model),
-            ]
-        )
-
-        pipeline.fit(X_train, y_train)
-        predictions = pipeline.predict(X_test)
-
-        results.append(
-            {
-                "model": model_name,
-                "MAE": mean_absolute_error(y_test, predictions),
-                "RMSE": np.sqrt(mean_squared_error(y_test, predictions)),
-                "R2": r2_score(y_test, predictions),
-            }
-        )
-        trained_models[model_name] = pipeline
-        predictions_by_model[model_name] = predictions
-
-    results_df = pd.DataFrame(results).sort_values(by="MAE", ascending=True)
-    best_model_name = results_df.iloc[0]["model"]
-    best_predictions = predictions_by_model[best_model_name]
-
-    return results_df, trained_models, best_model_name, best_predictions
+# Model 4: Random Forest, czyli wiele drzew decyzyjnych
+model_rf = RandomForestRegressor(n_estimators=100, random_state=42)
+model_rf.fit(x_train, y_train)
+rf_prediction = model_rf.predict(x_test)
 
 
-def save_price_distribution(df: pd.DataFrame) -> None:
-    plt.figure(figsize=(10, 6))
-    sns.histplot(df[TARGET_COLUMN], kde=True, bins=30)
-    plt.title("Rozklad cen samochodow")
-    plt.xlabel("Cena sprzedazy (PLN)")
-    plt.ylabel("Liczba samochodow")
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "price_distribution.png", dpi=150)
-    plt.close()
+# Porownanie wynikow modeli
+models = ["Linear Regression", "KNN", "Decision Tree", "Random Forest"]
+predictions = [lr_prediction, knn_prediction, dt_prediction, rf_prediction]
+results = []
 
+for model_name, prediction in zip(models, predictions):
+    mae = mean_absolute_error(y_test, prediction)
+    rmse = np.sqrt(mean_squared_error(y_test, prediction))
+    r2 = r2_score(y_test, prediction)
 
-def save_correlation_heatmap(df: pd.DataFrame) -> None:
-    correlation = df.select_dtypes(include=["number"]).corr()
-
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(correlation, cmap="coolwarm", center=0, annot=True, fmt=".2f")
-    plt.title("Korelacje miedzy cechami liczbowymi")
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "correlation_heatmap.png", dpi=150)
-    plt.close()
-
-
-def save_model_comparison(results_df: pd.DataFrame) -> None:
-    plt.figure(figsize=(10, 6))
-    sns.barplot(data=results_df, x="MAE", y="model")
-    plt.title("Porownanie modeli wedlug MAE")
-    plt.xlabel("MAE - sredni blad predykcji (PLN)")
-    plt.ylabel("Model")
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "model_comparison_mae.png", dpi=150)
-    plt.close()
-
-
-def save_actual_vs_predicted(
-    y_test: pd.Series,
-    predictions: np.ndarray,
-    best_model_name: str,
-) -> None:
-    min_value = min(y_test.min(), predictions.min())
-    max_value = max(y_test.max(), predictions.max())
-
-    plt.figure(figsize=(8, 8))
-    plt.scatter(y_test, predictions, alpha=0.6)
-    plt.plot([min_value, max_value], [min_value, max_value], color="red", linestyle="--")
-    plt.title(f"Ceny prawdziwe vs przewidziane - {best_model_name}")
-    plt.xlabel("Prawdziwa cena (PLN)")
-    plt.ylabel("Przewidziana cena (PLN)")
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "actual_vs_predicted.png", dpi=150)
-    plt.close()
-
-
-def clean_feature_name(name: str) -> str:
-    cleaned_name = name.replace("numeric__", "").replace("categorical__", "")
-
-    for original, polish in FEATURE_LABELS.items():
-        if cleaned_name == original:
-            return polish
-        if cleaned_name.startswith(f"{original}_"):
-            value = cleaned_name.removeprefix(f"{original}_")
-            return f"{polish}: {value}"
-
-    return cleaned_name.replace("_", " ")
-
-
-def save_feature_importance(random_forest_pipeline: Pipeline) -> None:
-    model = random_forest_pipeline.named_steps["model"]
-    preprocessor = random_forest_pipeline.named_steps["preprocess"]
-    feature_names = preprocessor.get_feature_names_out()
-
-    importance_df = pd.DataFrame(
+    results.append(
         {
-            "feature": [clean_feature_name(name) for name in feature_names],
-            "importance": model.feature_importances_,
+            "model": model_name,
+            "MAE": mae,
+            "RMSE": rmse,
+            "R2": r2,
         }
-    ).sort_values(by="importance", ascending=False)
-
-    importance_df.to_csv(OUTPUT_DIR / "feature_importance.csv", index=False)
-
-    plt.figure(figsize=(10, 7))
-    sns.barplot(data=importance_df.head(15), x="importance", y="feature")
-    plt.title("Najwazniejsze cechy wedlug modelu Random Forest")
-    plt.xlabel("Waznosc cechy")
-    plt.ylabel("Cecha")
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "top_feature_importance.png", dpi=150)
-    plt.close()
-
-
-def save_results(
-    results_df: pd.DataFrame,
-    trained_models: dict[str, Pipeline],
-    best_model_name: str,
-) -> None:
-    results_path = OUTPUT_DIR / "model_results.csv"
-    model_path = MODELS_DIR / "best_car_price_model.joblib"
-
-    results_df.to_csv(results_path, index=False)
-    joblib.dump(trained_models[best_model_name], model_path)
-    save_feature_importance(trained_models["Random Forest"])
-
-    print("\nWyniki modeli:")
-    print(results_df.to_string(index=False))
-    print(f"\nNajlepszy model wedlug MAE: {best_model_name}")
-    print(f"Zapisano wyniki w: {results_path}")
-    print(f"Zapisano najlepszy model w: {model_path}")
-
-
-def main() -> None:
-    ensure_directories_exist()
-    raw_df = load_dataset()
-    cleaned_df = clean_dataset(raw_df)
-
-    save_price_distribution(cleaned_df)
-    save_correlation_heatmap(cleaned_df)
-
-    X, y = split_features_and_target(cleaned_df)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=RANDOM_STATE,
     )
 
-    results_df, trained_models, best_model_name, best_predictions = evaluate_models(
-        X_train,
-        X_test,
-        y_train,
-        y_test,
-    )
+results_df = pd.DataFrame(results).sort_values("MAE")
+results_df.to_csv(os.path.join(outputs_folder, "model_results.csv"), index=False)
 
-    save_model_comparison(results_df)
-    save_actual_vs_predicted(y_test, best_predictions, best_model_name)
-    save_results(results_df, trained_models, best_model_name)
-
-    print("\nGotowe. Wykresy znajdziesz w folderze outputs/figures.")
+print("\nWyniki modeli:")
+print(results_df)
+print("\nNajlepszy model wedlug MAE:", results_df.iloc[0]["model"])
 
 
-if __name__ == "__main__":
-    main()
+# Wykres porownujacy modele
+sns.barplot(data=results_df, x="MAE", y="model")
+plt.title("Porownanie modeli wedlug MAE")
+plt.xlabel("Sredni blad predykcji (PLN)")
+plt.ylabel("Model")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "model_comparison_mae.png"))
+plt.close()
+
+
+# Najwazniejsze cechy wedlug Random Forest
+feature_importance = pd.DataFrame(
+    {
+        "feature": x.columns,
+        "importance": model_rf.feature_importances_,
+    }
+).sort_values("importance", ascending=False)
+
+feature_importance.to_csv(
+    os.path.join(outputs_folder, "feature_importance.csv"),
+    index=False,
+)
+
+sns.barplot(data=feature_importance.head(10), x="importance", y="feature")
+plt.title("Najwazniejsze cechy wedlug Random Forest")
+plt.xlabel("Waznosc cechy")
+plt.ylabel("Cecha")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "top_feature_importance.png"))
+plt.close()
+
+
+# Porownanie cen prawdziwych i przewidzianych przez Random Forest
+plt.scatter(y_test, rf_prediction, alpha=0.5)
+plt.title("Ceny prawdziwe i przewidziane - Random Forest")
+plt.xlabel("Prawdziwa cena (PLN)")
+plt.ylabel("Przewidziana cena (PLN)")
+plt.tight_layout()
+plt.savefig(os.path.join(figures_folder, "actual_vs_predicted.png"))
+plt.close()
+
+print("\nGotowe. Wyniki zapisano w folderze outputs.")

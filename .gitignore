@@ -6,9 +6,6 @@ __pycache__/
 data/raw/*.data
 data/raw/*.csv
 data/raw/.complete/
-models/*.joblib
-outputs/*.csv
-outputs/figures/*.png
 
 .env
 .DS_Store
