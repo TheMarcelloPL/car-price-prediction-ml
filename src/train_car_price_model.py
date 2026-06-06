@@ -1,24 +1,21 @@
 import os
 
+import kagglehub
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.tree import DecisionTreeRegressor, plot_tree
 
 
 # Ustawienia projektu
 INR_TO_PLN = 0.04
-REFERENCE_YEAR = 2020
 
 project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-file_path = os.path.join(project_folder, "data", "raw", "cardekho.csv")
 outputs_folder = os.path.join(project_folder, "outputs")
 figures_folder = os.path.join(outputs_folder, "figures")
 
@@ -26,13 +23,9 @@ os.makedirs(outputs_folder, exist_ok=True)
 os.makedirs(figures_folder, exist_ok=True)
 
 
-# Wczytanie danych
-if not os.path.exists(file_path):
-    raise FileNotFoundError(
-        "Nie znaleziono data/raw/cardekho.csv. "
-        "Najpierw uruchom: python src/download_data.py"
-    )
-
+# Pobranie i wczytanie danych
+path = kagglehub.dataset_download("sukhmandeepsinghbrar/car-price-prediction-dataset")
+file_path = os.path.join(path, "cardekho.csv")
 df = pd.read_csv(file_path)
 
 print("Pierwsze wiersze danych:")
@@ -46,53 +39,16 @@ print(df.isnull().sum())
 rows_before_cleaning = len(df)
 
 df = df.drop_duplicates()
+df = df.dropna()
 
-numeric_columns = [
-    "year",
-    "selling_price",
-    "km_driven",
-    "mileage(km/ltr/kg)",
-    "engine",
-    "max_power",
-    "seats",
-]
+# Usuwamy ewidentnie bledne przebiegi powyzej miliona kilometrow
+df = df[df["km_driven"] <= 1_000_000]
 
-for column in numeric_columns:
-    df[column] = pd.to_numeric(df[column], errors="coerce")
-
-# Z nazwy samochodu pobieramy pierwszy wyraz, czyli marke.
+# Z pelnej nazwy samochodu zostawiamy tylko marke
 df["brand"] = df["name"].str.split().str[0]
+df = df.drop("name", axis=1)
 
-# Zamiast rocznika tworzymy wiek samochodu.
-df["car_age"] = REFERENCE_YEAR - df["year"]
-df = df.drop(["name", "year"], axis=1)
-
-# Wartosc 0 dla spalania lub mocy oznacza blad danych.
-df.loc[df["mileage(km/ltr/kg)"] <= 0, "mileage(km/ltr/kg)"] = np.nan
-df.loc[df["max_power"] <= 0, "max_power"] = np.nan
-
-# Brakujace liczby uzupelniamy mediana.
-numeric_columns = df.select_dtypes(include="number").columns
-for column in numeric_columns:
-    df[column] = df[column].fillna(df[column].median())
-
-# Brakujace teksty uzupelniamy najczestsza wartoscia.
-text_columns = df.select_dtypes(exclude="number").columns
-for column in text_columns:
-    df[column] = df[column].fillna(df[column].mode()[0])
-
-# Usuwamy skrajne ceny i bledne rekordy.
-lower_price = df["selling_price"].quantile(0.01)
-upper_price = df["selling_price"].quantile(0.99)
-
-df = df[
-    (df["selling_price"] >= lower_price)
-    & (df["selling_price"] <= upper_price)
-    & (df["km_driven"] <= 1_000_000)
-    & (df["car_age"] >= 0)
-]
-
-# Oryginalna cena jest w rupiach indyjskich. Przeliczamy ja na PLN.
+# Oryginalna cena jest w rupiach indyjskich przeliczamy ja na PLN
 df["selling_price"] = df["selling_price"] * INR_TO_PLN
 
 print("\nUsuniete rekordy:", rows_before_cleaning - len(df))
@@ -129,7 +85,8 @@ plt.savefig(os.path.join(figures_folder, "correlation_heatmap.png"))
 plt.close()
 
 
-# Zamieniamy teksty na liczby, tak jak na zajeciach.
+# Zamiana tekstow na liczby
+text_columns = df.select_dtypes(exclude="number").columns
 label_encoder = LabelEncoder()
 for column in text_columns:
     df[column] = label_encoder.fit_transform(df[column])
@@ -139,7 +96,7 @@ for column in text_columns:
 x = df.drop("selling_price", axis=1)
 y = df["selling_price"]
 
-# Podzial na 80% danych treningowych i 20% danych testowych.
+# Podzial na 80% danych treningowych i 20% danych testowych
 x_train, x_test, y_train, y_test = train_test_split(
     x,
     y,
@@ -155,7 +112,7 @@ lr_prediction = model_lr.predict(x_test)
 
 
 # Model 2: KNN
-# KNN wymaga skalowania, aby duze liczby nie byly automatycznie wazniejsze.
+# KNN wymaga skalowania, aby duze liczby nie byly automatycznie wazniejsze
 scaler = StandardScaler()
 x_train_scaled = scaler.fit_transform(x_train)
 x_test_scaled = scaler.transform(x_test)
@@ -171,74 +128,55 @@ model_dt.fit(x_train, y_train)
 dt_prediction = model_dt.predict(x_test)
 
 
-# Model 4: Random Forest, czyli wiele drzew decyzyjnych
-model_rf = RandomForestRegressor(n_estimators=100, random_state=42)
-model_rf.fit(x_train, y_train)
-rf_prediction = model_rf.predict(x_test)
-
-
 # Porownanie wynikow modeli
-models = ["Linear Regression", "KNN", "Decision Tree", "Random Forest"]
-predictions = [lr_prediction, knn_prediction, dt_prediction, rf_prediction]
-results = []
+results_df = pd.DataFrame(
+    {
+        "model": ["Linear Regression", "KNN", "Decision Tree"],
+        "MSE": [
+            mean_squared_error(y_test, lr_prediction),
+            mean_squared_error(y_test, knn_prediction),
+            mean_squared_error(y_test, dt_prediction),
+        ],
+        "R2": [
+            r2_score(y_test, lr_prediction),
+            r2_score(y_test, knn_prediction),
+            r2_score(y_test, dt_prediction),
+        ],
+    }
+).sort_values("R2", ascending=False)
 
-for model_name, prediction in zip(models, predictions):
-    mae = mean_absolute_error(y_test, prediction)
-    rmse = np.sqrt(mean_squared_error(y_test, prediction))
-    r2 = r2_score(y_test, prediction)
+results_df["MSE"] = results_df["MSE"].round().astype(int)
+results_df["R2"] = results_df["R2"].round(3)
 
-    results.append(
-        {
-            "model": model_name,
-            "MAE": mae,
-            "RMSE": rmse,
-            "R2": r2,
-        }
-    )
-
-results_df = pd.DataFrame(results).sort_values("MAE")
 results_df.to_csv(os.path.join(outputs_folder, "model_results.csv"), index=False)
 
 print("\nWyniki modeli:")
 print(results_df)
-print("\nNajlepszy model wedlug MAE:", results_df.iloc[0]["model"])
+print("\nNajlepszy model wedlug R2:", results_df.iloc[0]["model"])
 
 
 # Wykres porownujacy modele
-sns.barplot(data=results_df, x="MAE", y="model")
-plt.title("Porownanie modeli wedlug MAE")
-plt.xlabel("Sredni blad predykcji (PLN)")
+sns.barplot(data=results_df, x="R2", y="model")
+plt.title("Porownanie modeli wedlug R2")
+plt.xlabel("R2")
 plt.ylabel("Model")
 plt.tight_layout()
-plt.savefig(os.path.join(figures_folder, "model_comparison_mae.png"))
+plt.savefig(os.path.join(figures_folder, "model_comparison_r2.png"))
 plt.close()
 
 
-# Najwazniejsze cechy wedlug Random Forest
-feature_importance = pd.DataFrame(
-    {
-        "feature": x.columns,
-        "importance": model_rf.feature_importances_,
-    }
-).sort_values("importance", ascending=False)
-
-feature_importance.to_csv(
-    os.path.join(outputs_folder, "feature_importance.csv"),
-    index=False,
-)
-
-sns.barplot(data=feature_importance.head(10), x="importance", y="feature")
-plt.title("Najwazniejsze cechy wedlug Random Forest")
-plt.xlabel("Waznosc cechy")
-plt.ylabel("Cecha")
+# Wizualizacja pierwszych poziomow drzewa decyzyjnego
+plt.figure(figsize=(20, 10))
+plot_tree(model_dt, feature_names=x.columns, filled=True, max_depth=2)
+plt.title("Pierwsze poziomy drzewa decyzyjnego")
 plt.tight_layout()
-plt.savefig(os.path.join(figures_folder, "top_feature_importance.png"))
+plt.savefig(os.path.join(figures_folder, "decision_tree.png"))
 plt.close()
 
 
-# Porownanie cen prawdziwych i przewidzianych przez Random Forest
-plt.scatter(y_test, rf_prediction, alpha=0.5)
-plt.title("Ceny prawdziwe i przewidziane - Random Forest")
+# Porownanie cen prawdziwych i przewidzianych przez drzewo decyzyjne
+plt.scatter(y_test, dt_prediction, alpha=0.5)
+plt.title("Ceny prawdziwe i przewidziane - drzewo decyzyjne")
 plt.xlabel("Prawdziwa cena (PLN)")
 plt.ylabel("Przewidziana cena (PLN)")
 plt.tight_layout()

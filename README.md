@@ -43,11 +43,9 @@ Najważniejsze kolumny:
 Program:
 
 - usuwa duplikaty,
-- zamienia błędne wartości liczbowe na braki danych,
-- uzupełnia brakujące liczby medianą,
-- uzupełnia brakujące teksty najczęstszą wartością,
-- tworzy cechę wieku samochodu,
-- usuwa skrajne lub błędne rekordy,
+- usuwa rekordy zawierające brakujące wartości,
+- usuwa ewidentnie błędne przebiegi powyżej miliona kilometrów,
+- pobiera markę z pełnej nazwy samochodu,
 - przelicza ceny na złotówki,
 - zamienia teksty na liczby za pomocą `LabelEncoder`.
 
@@ -55,26 +53,24 @@ Program:
 
 - Linear Regression,
 - KNN Regression,
-- Decision Tree Regression,
-- Random Forest Regression.
+- Decision Tree Regression.
 
-Modele są porównywane za pomocą MAE, RMSE oraz R². Najlepszy model jest wybierany według najniższego MAE.
+Modele są porównywane za pomocą MSE oraz R². Najlepszy model jest wybierany według najwyższego R².
 
 ## Wyniki
 
-Najlepszym modelem okazał się **Random Forest**:
+Najlepszym modelem okazało się **Decision Tree**:
 
-- MAE: około 2 814 PLN,
-- RMSE: około 4 172 PLN,
-- R²: około 0,897.
+- MSE: około 35 338 160,
+- R²: około 0,892.
 
-Oznacza to, że model myli się średnio o około 2 814 zł. Najważniejszymi cechami według modelu Random Forest były moc maksymalna, wiek samochodu, pojemność silnika i przebieg.
+R² na poziomie 0,892 oznacza dobre dopasowanie modelu do danych testowych.
 
 ## Wnioski
 
-Random Forest osiągnął najlepszy wynik spośród porównywanych modeli. Regresja liniowa uzyskała najsłabszy wynik, ponieważ zależności między cechami samochodu i jego ceną nie są wyłącznie liniowe.
+Drzewo decyzyjne osiągnęło najlepszy wynik spośród porównywanych modeli. Regresja liniowa uzyskała najsłabszy wynik, ponieważ zależności między cechami samochodu i jego ceną nie są wyłącznie liniowe.
 
-Rocznik, przedstawiony jako wiek samochodu, okazał się jedną z najważniejszych cech. Potwierdza to, że cena używanego samochodu mocno zależy od jego wieku. Model może służyć do orientacyjnego szacowania ceny, ale nie zastępuje profesjonalnej wyceny.
+Rocznik okazał się jedną z najważniejszych cech. Potwierdza to, że cena używanego samochodu mocno zależy od roku jego produkcji. Model może służyć do orientacyjnego szacowania ceny, ale nie zastępuje profesjonalnej wyceny.
 
 ## Wizualizacje
 
@@ -83,8 +79,8 @@ Folder `outputs/figures` zawiera wykresy przedstawiające:
 - rozkład cen samochodów,
 - średnią cenę według rodzaju paliwa,
 - korelacje między danymi liczbowymi,
-- porównanie błędów modeli,
-- najważniejsze cechy,
+- porównanie modeli według R²,
+- pierwsze poziomy drzewa decyzyjnego,
 - porównanie cen prawdziwych i przewidzianych.
 
 ## Uruchomienie
@@ -95,16 +91,10 @@ Instalacja bibliotek:
 pip install -r requirements.txt
 ```
 
-Pobranie danych z Kaggle:
-
-```powershell
-python src/download_data.py
-```
-
-Trenowanie i porównanie modeli:
+Uruchomienie projektu:
 
 ```powershell
 python src/train_car_price_model.py
 ```
 
-Wyniki i wykresy zostaną zapisane w folderze `outputs`.
+Program automatycznie pobiera dane z Kaggle. Wyniki i wykresy zostaną zapisane w folderze `outputs`.
