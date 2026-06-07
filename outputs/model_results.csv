@@ -1,4 +1,0 @@
-model,MSE,R2
-Decision Tree,35338162,0.892
-KNN,59197425,0.819
-Linear Regression,151638740,0.537

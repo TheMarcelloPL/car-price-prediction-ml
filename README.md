@@ -8,80 +8,62 @@ Marcel Szulc
 
 ## Cel projektu
 
-Celem projektu jest przewidywanie ceny sprzedaży używanego samochodu na podstawie jego rocznika, przebiegu, marki, parametrów technicznych oraz informacji o ogłoszeniu.
+Celem projektu jest przewidywanie ceny sprzedaży używanego samochodu na podstawie jego rocznika, przebiegu oraz parametrów technicznych.
 
-Jest to problem regresji, ponieważ model przewiduje konkretną wartość liczbową, czyli cenę samochodu.
+Jest to problem regresji, ponieważ model przewiduje wartość liczbową, czyli cenę samochodu.
 
 ## Dane
 
-Projekt korzysta ze zbioru **Car Price Prediction Dataset** dostępnego w serwisie Kaggle:
+Projekt korzysta ze zbioru **Car Price Prediction Dataset** z serwisu Kaggle:
 
 https://www.kaggle.com/datasets/sukhmandeepsinghbrar/car-price-prediction-dataset
 
-Zbiór zawiera ponad 8000 ogłoszeń samochodów z indyjskiego rynku. Oryginalna cena sprzedaży jest podana w rupiach indyjskich (INR). Dla czytelności program przelicza ceny na złotówki przy użyciu stałego kursu:
+Zbiór zawiera ponad 8000 ogłoszeń samochodów z indyjskiego rynku. Oryginalne ceny są podane w rupiach indyjskich. Program przelicza je na złotówki przy użyciu stałego kursu:
 
 ```text
 1 INR = 0,04 PLN
 ```
 
-Stały kurs zapewnia powtarzalność wyników projektu.
-
-Najważniejsze kolumny:
-
-- `selling_price` - cena sprzedaży, przeliczana z INR na PLN,
-- `year` - rocznik,
-- `km_driven` - przebieg,
-- `name` - nazwa samochodu,
-- `fuel` - rodzaj paliwa,
-- `transmission` - skrzynia biegów,
-- `owner` - liczba poprzednich właścicieli,
-- `engine` - pojemność silnika,
-- `max_power` - moc maksymalna.
-
 ## Przygotowanie danych
 
 Program:
 
-- usuwa duplikaty,
+- usuwa powtarzające się rekordy,
 - usuwa rekordy zawierające brakujące wartości,
-- usuwa ewidentnie błędne przebiegi powyżej miliona kilometrów,
-- pobiera markę z pełnej nazwy samochodu,
+- usuwa błędne przebiegi powyżej miliona kilometrów,
+- usuwa pełną nazwę modelu samochodu,
 - przelicza ceny na złotówki,
-- zamienia teksty na liczby za pomocą `LabelEncoder`.
+- zamienia pozostałe teksty na liczby za pomocą `LabelEncoder`.
 
-## Porównywane modele
+## Model
 
-- Linear Regression,
-- KNN Regression,
-- Decision Tree Regression.
+Projekt wykorzystuje model **Decision Tree Regressor**. Jest to regresyjny wariant drzewa decyzyjnego. Wariant regresyjny przewiduje liczbę, czyli cenę samochodu.
 
-Modele są porównywane za pomocą MSE oraz R². Najlepszy model jest wybierany według najwyższego R².
+Dane są dzielone na:
 
-## Wyniki
+- 80% danych treningowych,
+- 20% danych testowych.
 
-Najlepszym modelem okazało się **Decision Tree**:
+Model jest oceniany za pomocą R². Wynik bliższy `1` oznacza lepsze dopasowanie modelu.
 
-- MSE: około 35 338 160,
-- R²: około 0,892.
+## Wynik
 
-R² na poziomie 0,892 oznacza dobre dopasowanie modelu do danych testowych.
+Model osiągnął R² około **0,787**. Oznacza to dobre dopasowanie modelu do danych testowych.
+
+W folderze `outputs` znajduje się tabela przykładowych cen prawdziwych i przewidzianych.
 
 ## Wnioski
 
-Drzewo decyzyjne osiągnęło najlepszy wynik spośród porównywanych modeli. Regresja liniowa uzyskała najsłabszy wynik, ponieważ zależności między cechami samochodu i jego ceną nie są wyłącznie liniowe.
-
-Rocznik okazał się jedną z najważniejszych cech. Potwierdza to, że cena używanego samochodu mocno zależy od roku jego produkcji. Model może służyć do orientacyjnego szacowania ceny, ale nie zastępuje profesjonalnej wyceny.
+Drzewo decyzyjne dobrze poradziło sobie z przewidywaniem cen, ponieważ może tworzyć różne reguły dla różnych samochodów. Model nadal nie zastępuje profesjonalnej wyceny, ponieważ w zbiorze nie ma informacji takich jak stan techniczny, historia wypadków i wyposażenie.
 
 ## Wizualizacje
 
-Folder `outputs/figures` zawiera wykresy przedstawiające:
+Projekt tworzy cztery proste wykresy:
 
 - rozkład cen samochodów,
-- średnią cenę według rodzaju paliwa,
-- korelacje między danymi liczbowymi,
-- porównanie modeli według R²,
-- pierwsze poziomy drzewa decyzyjnego,
+- średnia cena według rodzaju paliwa,
 - porównanie cen prawdziwych i przewidzianych.
+- pierwsze poziomy drzewa decyzyjnego.
 
 ## Uruchomienie
 
@@ -97,4 +79,4 @@ Uruchomienie projektu:
 python src/train_car_price_model.py
 ```
 
-Program automatycznie pobiera dane z Kaggle. Wyniki i wykresy zostaną zapisane w folderze `outputs`.
+Program automatycznie pobiera dane z Kaggle.
