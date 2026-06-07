@@ -1,3 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Lokalne notatki do prezentacji
+Notatka_do_prezentacji.*
+.codex_pdf_qa/
